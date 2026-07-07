@@ -1,0 +1,80 @@
+name: Build and Publish
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Build
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Add GitHub Packages Source
+        run: |
+          dotnet nuget add source "https://nuget.pkg.github.com/WorkflowAutomationEngine/index.json" \
+            --name github \
+            --username ${{ github.actor }} \
+            --password ${{ secrets.GITHUB_TOKEN }} \
+            --store-password-in-clear-text
+
+      - name: Install WorkflowAutomationEngine Tool
+        run: |
+          dotnet tool install WorkflowAutomationEngine.Core.CLI \
+            --version 1.0.0.4 \
+            --add-source "https://nuget.pkg.github.com/WorkflowAutomationEngine/index.json" \
+            --ignore-failed-sources
+
+      - name: Calculate Package Version
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(dotnet tool run workflowautomationengine)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Restore
+        run: dotnet restore *.slnx
+
+      - name: Build
+        run: dotnet build *.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test *.slnx --configuration Release --no-build --verbosity normal
+
+      - name: Pack
+        run: |
+          dotnet pack Test.Mid1/Test.Mid1.csproj \
+            --configuration Release \
+            --no-build \
+            --no-restore \
+            --output ./artifacts \
+            -p:Version=${{ env.VERSION }}
+
+      - name: Upload Package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Test.Mid1.Package
+          path: ./artifacts/*.nupkg
+
+      - name: Push Package
+        run: |
+          dotnet nuget push "./artifacts/*.nupkg" \
+            --source github \
+            --skip-duplicate
